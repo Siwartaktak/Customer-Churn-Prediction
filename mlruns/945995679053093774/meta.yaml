@@ -1,0 +1,6 @@
+artifact_location: file:///C:/Users/MSI/Customer-Churn-Prediction/mlruns/945995679053093774
+creation_time: 1743290738974
+experiment_id: '945995679053093774'
+last_update_time: 1743290738974
+lifecycle_stage: active
+name: churn_prediction
