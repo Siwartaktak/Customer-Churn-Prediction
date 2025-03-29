@@ -1,174 +1,149 @@
 import sys
 import os
 # Add the project root to the Python path
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel
-import joblib
+import argparse
 import pandas as pd
 import numpy as np
-from typing import List, Dict, Union
+import mlflow
+import mlflow.sklearn
+from datetime import datetime
+from sklearn.model_selection import train_test_split
 
-# Initialize FastAPI app
-app = FastAPI(
-    title="Customer Churn Prediction API",
-    description="API for predicting customer churn using Random Forest model",
-    version="1.0.0"
-)
+from src.data.load_data import load_dataset
+from src.data.preprocess import preprocess_data
+from src.models.train import train_model, evaluate_model, save_model
+from src.visualization.visualize import plot_feature_importance, plot_confusion_matrix
 
-# Define model directory
-MODEL_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "models")
-
-# Load model and artifacts
-model_path = os.path.join(MODEL_DIR, "model.joblib")
-encoders_path = os.path.join(MODEL_DIR, "encoders.joblib")
-feature_names_path = os.path.join(MODEL_DIR, "feature_names.joblib")
-
-# Check if model files exist
-if not (os.path.exists(model_path) and os.path.exists(encoders_path) and os.path.exists(feature_names_path)):
-    raise RuntimeError("Model files not found. Please train the model first.")
-
-# Load model and artifacts
-model = joblib.load(model_path)
-encoders = joblib.load(encoders_path)
-feature_names = joblib.load(feature_names_path)
-
-# Define input data model
-class CustomerData(BaseModel):
-    State: str
-    Account_Length: int
-    Area_Code: int
-    Phone: str
-    Intl_Plan: str
-    VMail_Plan: str
-    VMail_Message: int
-    Day_Mins: float
-    Day_Calls: int
-    Day_Charge: float
-    Eve_Mins: float
-    Eve_Calls: int
-    Eve_Charge: float
-    Night_Mins: float
-    Night_Calls: int
-    Night_Charge: float
-    Intl_Mins: float
-    Intl_Calls: int
-    Intl_Charge: float
-    CustServ_Calls: int
-
-# Define response model
-class PredictionResponse(BaseModel):
-    churn_probability: float
-    churn_prediction: bool
-    message: str  # Add this new field
-    feature_importance: Dict[str, float]
-
-def preprocess_input(customer_data: CustomerData):
-    """Preprocess input data for prediction"""
-    # Convert to DataFrame
-    data_dict = customer_data.dict()
+def main(train_data_path, test_data_path=None, output_dir="models", experiment_name="churn_prediction"):
+    """
+    Main function to run the workflow
     
-    # Define mapping from API feature names to model feature names
-    feature_mapping = {
-        "State": "State",
-        "Account_Length": "Account length",
-        "Area_Code": "Area code",
-        "Phone": "Phone",
-        "Intl_Plan": "International plan",
-        "VMail_Plan": "Voice mail plan",
-        "VMail_Message": "Number vmail messages",
-        "Day_Mins": "Total day minutes",
-        "Day_Calls": "Total day calls",
-        "Day_Charge": "Total day charge",
-        "Eve_Mins": "Total eve minutes",
-        "Eve_Calls": "Total eve calls", 
-        "Eve_Charge": "Total eve charge",
-        "Night_Mins": "Total night minutes",
-        "Night_Calls": "Total night calls",
-        "Night_Charge": "Total night charge",
-        "Intl_Mins": "Total intl minutes",
-        "Intl_Calls": "Total intl calls",
-        "Intl_Charge": "Total intl charge",
-        "CustServ_Calls": "Customer service calls"
+    Args:
+        train_data_path: Path to the training dataset
+        test_data_path: Path to the test dataset (optional)
+        output_dir: Directory to save outputs
+        experiment_name: MLflow experiment name
+    """
+    # Create output directory if it doesn't exist
+    os.makedirs(output_dir, exist_ok=True)
+    
+    # Set up MLflow experiment
+    mlflow.set_experiment(experiment_name)
+    
+    # Set up run name with timestamp for better tracking
+    run_name = f"churn_model_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+    
+    # Define hyperparameters
+    params = {
+        'n_estimators': 100,
+        'max_depth': 10,
+        'min_samples_split': 2,
+        'min_samples_leaf': 1,
+        'max_features': 'auto',
+        'bootstrap': True,
+        'random_state': 42
     }
     
-    # Rename keys in the data dictionary
-    renamed_dict = {feature_mapping.get(k, k): v for k, v in data_dict.items()}
-    
-    df = pd.DataFrame([renamed_dict])
-    
-    
-    # Preprocess categorical features
-    categorical_cols = df.select_dtypes(include=['object']).columns
-    for col in categorical_cols:
-        if col in encoders:
-            # Handle unseen categories
-            try:
-                df[col] = encoders[col].transform(df[col])
-            except ValueError:
-                # If category not seen during training, use most frequent category
-                print(f"Warning: Unseen category in {col}. Using default value.")
-                df[col] = 0  # Use default value
-    
-    # Scale numerical features
-    numeric_cols = df.select_dtypes(include=['int64', 'float64']).columns
-    if 'scaler' in encoders:
-        df[numeric_cols] = encoders['scaler'].transform(df[numeric_cols])
-    
-    # Ensure all feature names are present in the expected order
-    input_array = []
-    for feature in feature_names:
-        if feature in df.columns:
-            input_array.append(df[feature].values[0])
+    with mlflow.start_run(run_name=run_name):
+        # Set tags for better organization
+        mlflow.set_tag("model_type", "random_forest")
+        mlflow.set_tag("data_source", os.path.basename(train_data_path))
+        mlflow.set_tag("purpose", "churn_prediction")
+        
+        print("Loading data...")
+        df = load_dataset(train_data_path)
+        
+        # Log dataset parameters
+        mlflow.log_param("dataset_rows", len(df))
+        mlflow.log_param("dataset_columns", df.shape[1])
+        
+        # If test path is not provided, split the data
+        if test_data_path is None:
+            print("Splitting data into train and test sets...")
+            mlflow.log_param("split_type", "train_test_split")
+            mlflow.log_param("test_size", 0.2)
+            train_df, test_df = train_test_split(df, test_size=0.2, random_state=42)
         else:
-            input_array.append(0)  # Default value for missing features
-    
-    return np.array(input_array).reshape(1, -1)
-
-@app.get("/")
-def read_root():
-    return {"message": "Customer Churn Prediction API"}
-
-@app.get("/health")
-def health_check():
-    """Check if the API is running and model is loaded"""
-    if model is None or encoders is None or feature_names is None:
-        raise HTTPException(status_code=500, detail="Model or artifacts not loaded correctly")
-    return {"status": "healthy", "model_loaded": True}
-
-@app.post("/predict", response_model=PredictionResponse)
-def predict_churn(customer_data: CustomerData):
-    """Predict customer churn probability"""
-    try:
-        # Preprocess input data
-        input_data = preprocess_input(customer_data)
+            print("Loading test data...")
+            mlflow.log_param("split_type", "separate_files")
+            train_df = df
+            test_df = load_dataset(test_data_path)
         
-        # Make prediction
-        churn_probability = model.predict_proba(input_data)[0, 1]
-        churn_prediction = bool(churn_probability >= 0.5)
+        print("Preprocessing data...")
+        X_train, y_train, feature_names, encoders = preprocess_data(train_df)
+        X_test, y_test, _, _ = preprocess_data(test_df, target_column='Churn')
         
-        # Create the human-readable message
-        message = "The customer will churn." if churn_prediction else "The customer will not churn."
+        # Log dataset information
+        mlflow.log_param("train_samples", X_train.shape[0])
+        mlflow.log_param("test_samples", X_test.shape[0])
+        mlflow.log_param("n_features", X_train.shape[1])
+        mlflow.log_param("feature_names", ", ".join(feature_names))
         
-        # Get feature importances
-        importance_dict = {}
-        if hasattr(model, 'feature_importances_'):
-            for i, feature in enumerate(feature_names):
-                importance_dict[feature] = float(model.feature_importances_[i])
+        # Log preprocessing info
+        mlflow.log_param("categorical_features", len([e for e in encoders if e != 'scaler']))
         
-        # Return prediction
-        return PredictionResponse(
-            churn_probability=float(churn_probability),
-            churn_prediction=churn_prediction,
-            message=message,  # Add the message here
-            feature_importance=importance_dict
+        # Log all hyperparameters
+        for param_name, param_value in params.items():
+            mlflow.log_param(param_name, param_value)
+        
+        print("Training model...")
+        model = train_model(X_train, y_train, params=params)
+        
+        print("Evaluating model...")
+        metrics = evaluate_model(model, X_test, y_test)
+        
+        # Log all metrics
+        for metric_name, metric_value in metrics.items():
+            mlflow.log_metric(metric_name, metric_value)
+        
+        # Visualizations
+        print("Creating visualizations...")
+        feature_importance_path = plot_feature_importance(model, feature_names, save_dir=output_dir)
+        mlflow.log_artifact(feature_importance_path, "visualizations")
+        
+        y_pred = model.predict(X_test)
+        conf_matrix_path = plot_confusion_matrix(y_test, y_pred, save_dir=output_dir)
+        mlflow.log_artifact(conf_matrix_path, "visualizations")
+        
+        # Save model and artifacts locally
+        print("Saving model and artifacts...")
+        artifact_paths = save_model(model, encoders, feature_names, model_dir=output_dir)
+        
+        # Log artifacts to MLflow
+        for artifact_name, artifact_path in artifact_paths.items():
+            mlflow.log_artifact(artifact_path, artifact_name)
+        
+        # Log model to MLflow with signature
+        feature_spec = mlflow.models.infer_signature(X_train, y_train)
+        mlflow.sklearn.log_model(
+            model, 
+            "random_forest_model", 
+            signature=feature_spec,
+            input_example=X_train[:5]
         )
-    
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Prediction error: {str(e)}")
+        
+        # Create a summary of the run
+        run_id = mlflow.active_run().info.run_id
+        print(f"Workflow completed successfully. Model saved to {output_dir}")
+        print(f"MLflow run ID: {run_id}")
+        print(f"Accuracy: {metrics['accuracy']:.4f}")
+        print(f"F1 Score: {metrics['f1_score']:.4f}")
+        print(f"Precision: {metrics['precision']:.4f}")
+        print(f"Recall: {metrics['recall']:.4f}")
+        print(f"ROC AUC: {metrics['roc_auc']:.4f}")
+        
+        # Return metrics for potential further use
+        return metrics, run_id
 
-@app.get("/features")
-def get_features():
-    """Return the list of features used by the model"""
-    return {"features": feature_names}
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description='Train a Random Forest model for churn prediction')
+    parser.add_argument('--train-data', type=str, required=True, help='Path to training data')
+    parser.add_argument('--test-data', type=str, default=None, help='Path to test data (optional)')
+    parser.add_argument('--output-dir', type=str, default='models', help='Directory to save outputs')
+    parser.add_argument('--experiment-name', type=str, default='churn_prediction', help='MLflow experiment name')
+    
+    args = parser.parse_args()
+    
+    main(args.train_data, args.test_data, args.output_dir, args.experiment_name)
