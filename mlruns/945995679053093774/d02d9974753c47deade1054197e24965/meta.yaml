@@ -1,0 +1,15 @@
+artifact_uri: file:///C:/Users/MSI/Customer-Churn-Prediction/mlruns/945995679053093774/d02d9974753c47deade1054197e24965/artifacts
+end_time: 1743291375651
+entry_point_name: ''
+experiment_id: '945995679053093774'
+lifecycle_stage: active
+run_id: d02d9974753c47deade1054197e24965
+run_name: bright-cat-898
+run_uuid: d02d9974753c47deade1054197e24965
+source_name: ''
+source_type: 4
+source_version: ''
+start_time: 1743291367788
+status: 3
+tags: []
+user_id: MSI

@@ -1,0 +1,15 @@
+artifact_uri: file:///C:/Users/MSI/Customer-Churn-Prediction/mlruns/945995679053093774/8ced5332a96447598300b917c84cb70c/artifacts
+end_time: 1743291661752
+entry_point_name: ''
+experiment_id: '945995679053093774'
+lifecycle_stage: active
+run_id: 8ced5332a96447598300b917c84cb70c
+run_name: bouncy-bird-273
+run_uuid: 8ced5332a96447598300b917c84cb70c
+source_name: ''
+source_type: 4
+source_version: ''
+start_time: 1743291654187
+status: 3
+tags: []
+user_id: MSI
