@@ -49,25 +49,6 @@ This project implements an end-to-end MLOps pipeline for customer churn predicti
 - Added metrics for model performance and data drift
 - Tools: Prometheus, Grafana
 
-## Project Structure
-Customer-Churn-Prediction/
-├── data/                 # Data files
-├── models/               # Saved model artifacts
-├── monitoring/           # Monitoring configuration
-│   ├── grafana/          # Grafana dashboards
-│   └── prometheus/       # Prometheus configuration
-├── mlruns/               # MLflow tracking data
-├── src/                  # Source code
-│   ├── api/              # FastAPI application
-│   ├── data/             # Data processing modules
-│   ├── models/           # Model training and evaluation
-│   ├── monitoring/       # Monitoring modules
-│   └── visualization/    # Visualization utilities
-├── Dockerfile            # API container definition
-├── Dockerfile.training   # Training container definition
-├── docker-compose.yml    # Container orchestration
-└── docker-compose-monitoring.yml  # Monitoring stack
-
 
 ## Installation
 
